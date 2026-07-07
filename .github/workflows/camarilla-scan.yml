@@ -1,0 +1,27 @@
+name: Camarilla R5 Scanner
+
+on:
+  schedule:
+    # Runs 1 minute after every 15-minute candle close (00,15,30,45 + 1 min buffer)
+    - cron: "1,16,31,46 * * * *"
+  workflow_dispatch: {}  # allows manual "Run workflow" button for testing
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run scanner
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python scan_camarilla.py
