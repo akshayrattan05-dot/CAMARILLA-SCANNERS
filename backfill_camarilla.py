@@ -17,7 +17,10 @@ below if you want a summary posted to Discord as well.
 import requests
 import time
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 # ---------- CONFIG ----------
 R5_FORMULA = "a"  # must match scan_camarilla.py's setting
@@ -55,10 +58,18 @@ def get_daily_hlc(symbol):
 
 
 def get_todays_15m_candles(symbol):
-    """All 15m candles from 00:00 UTC today up to now."""
-    now = datetime.now(timezone.utc)
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_ms = int(start_of_day.timestamp() * 1000)
+    """All 15m candles since the most recent 5:30 AM IST session start,
+    up to now. 5:30 AM IST = 00:00 UTC, matching when the daily chart
+    actually opens a new candle. If it's currently before 5:30 AM IST,
+    the "current session" is still yesterday's, so we roll back a day."""
+    now_utc = datetime.now(timezone.utc)
+    now_ist = now_utc.astimezone(IST)
+
+    session_start_ist = now_ist.replace(hour=5, minute=30, second=0, microsecond=0)
+    if now_ist < session_start_ist:
+        session_start_ist = session_start_ist - timedelta(days=1)
+
+    start_ms = int(session_start_ist.timestamp() * 1000)
 
     url = f"{BINANCE_FUTURES_BASE}/fapi/v1/klines"
     params = {
@@ -74,7 +85,7 @@ def get_todays_15m_candles(symbol):
     # Drop the currently-forming (last, incomplete) candle
     if not klines:
         return []
-    now_ms = int(now.timestamp() * 1000)
+    now_ms = int(now_utc.timestamp() * 1000)
     closed = [k for k in klines if k[6] < now_ms]  # k[6] = close time
     return closed
 
@@ -99,8 +110,8 @@ def find_all_occurrences_today(symbol, r5):
         c1_data, c2_data = candles[i], candles[i + 1]
         o1, c1 = float(c1_data[1]), float(c1_data[4])
         o2, c2 = float(c2_data[1]), float(c2_data[4])
-        t1 = datetime.fromtimestamp(c1_data[0] / 1000, tz=timezone.utc)
-        t2 = datetime.fromtimestamp(c2_data[0] / 1000, tz=timezone.utc)
+        t1 = datetime.fromtimestamp(c1_data[0] / 1000, tz=timezone.utc).astimezone(IST)
+        t2 = datetime.fromtimestamp(c2_data[0] / 1000, tz=timezone.utc).astimezone(IST)
 
         if c1 > o1 and c1 > r5 and c2 > o2 and c2 > r5:
             occurrences.append((t1, t2, c1, c2))
@@ -125,7 +136,7 @@ def send_discord_summary(all_results):
 
 def backfill():
     print(f"Backfill scan starting at {datetime.now(timezone.utc).isoformat()}")
-    print("Scanning today's full candle history (since 00:00 UTC) for every symbol...")
+    print("Scanning today's full candle history (since 5:30 AM IST session start) for every symbol...")
     print()
 
     try:
