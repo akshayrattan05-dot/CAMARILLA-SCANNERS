@@ -17,6 +17,7 @@ below if you want a summary posted to Discord as well.
 import requests
 import time
 import sys
+import os
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 # ---------- CONFIG ----------
 R5_FORMULA = "a"  # must match scan_camarilla.py's setting
+TIMEFRAME = os.environ.get("TIMEFRAME", "15m")  # "15m" or "30m"
 BINANCE_FUTURES_BASE = "https://fapi.binance.com"
 REQUEST_DELAY_SECONDS = 0.15
 TIMEOUT = 10
@@ -57,11 +59,12 @@ def get_daily_hlc(symbol):
     return float(prev[2]), float(prev[3]), float(prev[4])
 
 
-def get_todays_15m_candles(symbol):
-    """All 15m candles since the most recent 5:30 AM IST session start,
-    up to now. 5:30 AM IST = 00:00 UTC, matching when the daily chart
-    actually opens a new candle. If it's currently before 5:30 AM IST,
-    the "current session" is still yesterday's, so we roll back a day."""
+def get_todays_candles(symbol):
+    """All candles (at TIMEFRAME resolution) since the most recent 5:30 AM
+    IST session start, up to now. 5:30 AM IST = 00:00 UTC, matching when
+    the daily chart actually opens a new candle. If it's currently before
+    5:30 AM IST, the "current session" is still yesterday's, so we roll
+    back a day."""
     now_utc = datetime.now(timezone.utc)
     now_ist = now_utc.astimezone(IST)
 
@@ -71,12 +74,16 @@ def get_todays_15m_candles(symbol):
 
     start_ms = int(session_start_ist.timestamp() * 1000)
 
+    # A full day is 96 15m candles or 48 30m candles — 100 covers either
+    # with buffer, but we scale it so larger timeframes don't over-fetch.
+    limit = 100 if TIMEFRAME == "15m" else 60
+
     url = f"{BINANCE_FUTURES_BASE}/fapi/v1/klines"
     params = {
         "symbol": symbol,
-        "interval": "15m",
+        "interval": TIMEFRAME,
         "startTime": start_ms,
-        "limit": 100,  # safely covers a full day (96 candles) + buffer
+        "limit": limit,
     }
     resp = requests.get(url, params=params, timeout=TIMEOUT)
     resp.raise_for_status()
@@ -104,7 +111,7 @@ def find_all_occurrences_today(symbol, r5):
     """Returns a list of (time1, time2, close1, close2) for every
     consecutive candle-pair today where both are green and both
     closed above r5."""
-    candles = get_todays_15m_candles(symbol)
+    candles = get_todays_candles(symbol)
     occurrences = []
     for i in range(len(candles) - 1):
         c1_data, c2_data = candles[i], candles[i + 1]
@@ -135,8 +142,8 @@ def send_discord_summary(all_results):
 
 
 def backfill():
-    print(f"Backfill scan starting at {datetime.now(timezone.utc).isoformat()}")
-    print("Scanning today's full candle history (since 5:30 AM IST session start) for every symbol...")
+    print(f"Backfill scan starting at {datetime.now(timezone.utc).isoformat()} (timeframe: {TIMEFRAME})")
+    print(f"Scanning today's full {TIMEFRAME} candle history (since 5:30 AM IST session start) for every symbol...")
     print()
 
     try:
